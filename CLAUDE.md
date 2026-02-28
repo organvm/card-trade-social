@@ -1,62 +1,31 @@
 # CLAUDE.md — card-trade-social
 
-**ORGAN III** (Commerce) · `organvm-iii-ergon/card-trade-social`
-**Status:** ACTIVE · **Branch:** `main`
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## What This Repo Is
+## What This Is
 
-Hydra Trading Card Ecosystem — financial-grade portfolio tracking, social commerce, gamification, and AI-powered generative content for the TCG asset class
+**Hydra TCG Platform** — vertical SaaS treating trading cards (MTG, Pokémon, Yu-Gi-Oh!, Lorcana) as a financial asset class. Combines portfolio tracking, price discovery, creator monetization, and gamification. **Specification + TypeScript stubs only** — no backend or frontend implementation.
 
-## Stack
-
-**Languages:** TypeScript, JavaScript
-**Build:** npm
-**Testing:** Jest
-
-## Directory Structure
-
-```
-📁 .github/
-📁 docs/
-    adr
-    design
-    source-materials
-📁 src/
-    index.ts
-📁 tests/
-    index.test.ts
-  CHANGELOG.md
-  LICENSE
-  README.md
-  jest.config.js
-  package.json
-  seed.yaml
-  tsconfig.json
-```
-
-## Key Files
-
-- `README.md` — Project documentation
-- `package.json` — Dependencies and scripts
-- `seed.yaml` — ORGANVM orchestration metadata
-- `src/` — Main source code
-- `tests/` — Test suite
-
-## Development
+## Commands
 
 ```bash
-npm install     # Install dependencies
-npm run build   # Build
-npm test        # Run tests
+npm install
+npm run build        # tsc → dist/
+npm test             # jest --coverage
+npm run lint         # eslint src/ --ext .ts
+npm run dev          # tsc --watch
 ```
 
-## ORGANVM Context
+## Architecture
 
-This repository is part of the **ORGANVM** eight-organ creative-institutional system.
-It belongs to **ORGAN III (Commerce)** under the `organvm-iii-ergon` GitHub organization.
+Pure TypeScript type library — domain model stubs in `src/`:
 
-**Registry:** [`registry-v2.json`](https://github.com/meta-organvm/organvm-corpvs-testamentvm/blob/main/registry-v2.json)
-**Corpus:** [`organvm-corpvs-testamentvm`](https://github.com/meta-organvm/organvm-corpvs-testamentvm)
+- **`card.ts`** — `Card`, `CardVariant`, `CardGame`, `Rarity`, `Condition` types. Cards modeled as financial assets with ticker symbols, variants (foil/etched/borderless/serialized), and market prices.
+- **`portfolio.ts`** — Portfolio holdings and unrealized gain tracking types
+- **`trade.ts`** — Trade/transaction types for buy/sell/trade flows
+- **`pricing.ts`** — Price aggregation types (TCGPlayer, eBay, Card Kingdom signals)
+
+`src/index.ts` re-exports all modules. Tests in `tests/`. Design documents in `docs/` (ADRs, source materials). Detailed specifications: `Theoretical Specifications_ Hydra Platform.md`, `TCG Ecosystem Research and Growth.md`.
 
 <!-- ORGANVM:AUTO:START -->
 ## System Context (auto-generated — do not edit)
