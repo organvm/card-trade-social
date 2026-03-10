@@ -1,0 +1,9 @@
+schema_version: '1.0'
+repo: card-trade-social
+organ: III
+display_name: "Hydra Trading Card Ecosystem \u2014 financial-grade portfolio tracking,\
+  \ social commerce, gamification, and AI-powered generative content for the TCG asset\
+  \ class"
+delivery:
+- platform: web_app
+  status: not_started
