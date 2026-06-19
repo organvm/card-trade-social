@@ -1,4 +1,5 @@
 import { main, VERSION } from "../src/index";
+import * as api from "../src/index";
 
 describe("card-trade-social", () => {
   test("version is defined", () => {
@@ -10,5 +11,13 @@ describe("card-trade-social", () => {
     main();
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("card-trade-social"));
     consoleSpy.mockRestore();
+  });
+
+  test("core modules are exported from the public entrypoint", () => {
+    expect(api.createCard).toBeDefined();
+    expect(api.createPortfolio).toBeDefined();
+    expect(api.createProposal).toBeDefined();
+    expect(api.calculateHydraPrice).toBeDefined();
+    expect(api.createProCheckoutSession).toBeDefined();
   });
 });

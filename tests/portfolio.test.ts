@@ -130,6 +130,15 @@ describe("getAllocations", () => {
     expect(allocs).toHaveLength(2);
     expect(allocs[0].game).toBe("pokemon"); // Higher value first
   });
+
+  it("should report zero percentages for zero-value holdings", () => {
+    const p = createPortfolio("user-1");
+    addCard(p, makeCard({ variants: [] }), 2);
+
+    const allocs = getAllocations(p);
+
+    expect(allocs).toEqual([{ game: "mtg", value: 0, percentage: 0 }]);
+  });
 });
 
 describe("getStats", () => {
@@ -219,6 +228,55 @@ describe("getAdvancedAnalytics", () => {
     expect(analytics.largest_position?.card_name).toBe("Black Lotus");
     expect(analytics.positions[0].weight_percentage).toBe(80);
   });
+
+  it("should return empty analytics for an empty Pro portfolio", () => {
+    const analytics = getAdvancedAnalytics(
+      createPortfolio("user-1"),
+      activePro("user-1")
+    );
+
+    expect(analytics).toMatchObject({
+      total_cards: 0,
+      total_value: 0,
+      total_cost_basis: 0,
+      unrealized_pnl: 0,
+      unrealized_pnl_percentage: 0,
+      concentration_score: 0,
+      concentration_risk: "low",
+      positions: [],
+    });
+    expect(analytics.largest_position).toBeUndefined();
+  });
+
+  it("should default missing purchase price to current market value", () => {
+    const p = createPortfolio("user-1");
+    addCard(p, makeCard({ card_id: "c1", condition: "mint" }), 3);
+
+    const analytics = getAdvancedAnalytics(p, activePro("user-1"));
+
+    expect(analytics.total_value).toBe(300);
+    expect(analytics.total_cost_basis).toBe(300);
+    expect(analytics.unrealized_pnl).toBe(0);
+    expect(analytics.positions[0]).toMatchObject({
+      card_id: "c1",
+      market_value: 300,
+      cost_basis: 300,
+      unrealized_pnl: 0,
+      weight_percentage: 100,
+    });
+  });
+
+  it("should classify medium concentration risk across balanced positions", () => {
+    const p = createPortfolio("user-1");
+    addCard(p, makeCard({ card_id: "c1", condition: "mint" }), 1);
+    addCard(p, makeCard({ card_id: "c2", condition: "mint" }), 1);
+    addCard(p, makeCard({ card_id: "c3", condition: "mint" }), 1);
+
+    const analytics = getAdvancedAnalytics(p, activePro("user-1"));
+
+    expect(analytics.concentration_score).toBe(0.33);
+    expect(analytics.concentration_risk).toBe("medium");
+  });
 });
 
 describe("cataloging gates", () => {
@@ -258,5 +316,36 @@ describe("cataloging gates", () => {
 
     expect(canCatalogCards(p, subscription, 1000).allowed).toBe(true);
     expect(() => assertCanCatalogCards(p, subscription, 1000)).not.toThrow();
+  });
+
+  it("should reject non-integer or non-positive requested card counts", () => {
+    const p = createPortfolio("user-1");
+    const subscription = createFreeSubscription("user-1");
+
+    expect(() => canCatalogCards(p, subscription, 0)).toThrow(
+      "Requested cards must be a positive integer"
+    );
+    expect(() => canCatalogCards(p, subscription, 1.5)).toThrow(
+      "Requested cards must be a positive integer"
+    );
+  });
+
+  it("should fall back to free limits for expired Pro users", () => {
+    const p = createPortfolio("user-1");
+    addCard(p, makeCard(), 100);
+    const subscription: SubscriptionState = {
+      user_id: "user-1",
+      tier: "pro",
+      status: "active",
+      current_period_end: new Date(Date.now() - 1_000),
+      cancel_at_period_end: false,
+      updated_at: new Date(),
+    };
+
+    const decision = canCatalogCards(p, subscription, 1);
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.max_cards).toBe(100);
+    expect(decision.requires_pro).toBe(true);
   });
 });
