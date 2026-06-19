@@ -50,6 +50,30 @@ describe("createProposal", () => {
     expect(trade.expires_at.getTime()).toBeGreaterThan(Date.now());
   });
 
+  it("should preserve optional cash, message, and custom expiry", () => {
+    const before = Date.now();
+    const trade = createProposal({
+      trade_id: "t1",
+      proposer_id: "alice",
+      receiver_id: "bob",
+      offered_items: [{ card: cardA, quantity: 1 }],
+      requested_items: [],
+      cash_adjustment: -25,
+      message: "Can add cash on pickup",
+      expiry_hours: 2,
+    });
+    const after = Date.now();
+
+    expect(trade.cash_adjustment).toBe(-25);
+    expect(trade.message).toBe("Can add cash on pickup");
+    expect(trade.expires_at.getTime()).toBeGreaterThanOrEqual(
+      before + 2 * 60 * 60 * 1000
+    );
+    expect(trade.expires_at.getTime()).toBeLessThanOrEqual(
+      after + 2 * 60 * 60 * 1000
+    );
+  });
+
   it("should reject self-trade", () => {
     expect(() =>
       createProposal({
@@ -140,6 +164,31 @@ describe("rejectTrade", () => {
     const rejected = rejectTrade(trade, "bob");
     expect(rejected.status).toBe("rejected");
   });
+
+  it("should reject if not the receiver", () => {
+    const trade = createProposal({
+      trade_id: "t1",
+      proposer_id: "alice",
+      receiver_id: "bob",
+      offered_items: [{ card: cardA, quantity: 1 }],
+      requested_items: [],
+    });
+
+    expect(() => rejectTrade(trade, "alice")).toThrow("Only the receiver");
+  });
+
+  it("should reject if not pending", () => {
+    const trade = createProposal({
+      trade_id: "t1",
+      proposer_id: "alice",
+      receiver_id: "bob",
+      offered_items: [{ card: cardA, quantity: 1 }],
+      requested_items: [],
+    });
+
+    const rejected = rejectTrade(trade, "bob");
+    expect(() => rejectTrade(rejected, "bob")).toThrow('status "rejected"');
+  });
 });
 
 describe("cancelTrade", () => {
@@ -166,6 +215,19 @@ describe("cancelTrade", () => {
     });
 
     expect(() => cancelTrade(trade, "bob")).toThrow("Only the proposer");
+  });
+
+  it("should reject cancellation if not pending", () => {
+    const trade = createProposal({
+      trade_id: "t1",
+      proposer_id: "alice",
+      receiver_id: "bob",
+      offered_items: [{ card: cardA, quantity: 1 }],
+      requested_items: [],
+    });
+
+    const cancelled = cancelTrade(trade, "alice");
+    expect(() => cancelTrade(cancelled, "alice")).toThrow('status "cancelled"');
   });
 });
 
@@ -194,6 +256,47 @@ describe("counterTrade", () => {
     expect(counter.proposer_id).toBe("bob");
     expect(counter.receiver_id).toBe("alice");
     expect(counter.cash_adjustment).toBe(50);
+  });
+
+  it("should reject counters from anyone other than the receiver", () => {
+    const original = createProposal({
+      trade_id: "t1",
+      proposer_id: "alice",
+      receiver_id: "bob",
+      offered_items: [{ card: cardA, quantity: 1 }],
+      requested_items: [{ card: cardB, quantity: 1 }],
+    });
+
+    expect(() =>
+      counterTrade({
+        new_trade_id: "t2",
+        original,
+        actor_id: "alice",
+        offered_items: [{ card: cardB, quantity: 1 }],
+        requested_items: [{ card: cardA, quantity: 1 }],
+      })
+    ).toThrow("Only the receiver");
+  });
+
+  it("should reject counters for non-pending trades", () => {
+    const original = createProposal({
+      trade_id: "t1",
+      proposer_id: "alice",
+      receiver_id: "bob",
+      offered_items: [{ card: cardA, quantity: 1 }],
+      requested_items: [{ card: cardB, quantity: 1 }],
+    });
+    const accepted = acceptTrade(original, "bob");
+
+    expect(() =>
+      counterTrade({
+        new_trade_id: "t2",
+        original: accepted,
+        actor_id: "bob",
+        offered_items: [{ card: cardB, quantity: 1 }],
+        requested_items: [{ card: cardA, quantity: 1 }],
+      })
+    ).toThrow('status "accepted"');
   });
 });
 
@@ -253,6 +356,21 @@ describe("netTradeValue", () => {
     const resolver = (card: any) => (card.card_id === "a" ? 100 : 200);
     // requested(200) - offered(100) + cash(50) = 150
     expect(netTradeValue(trade, resolver)).toBe(150);
+  });
+
+  it("should return negative values when the proposer receives more value", () => {
+    const trade = createProposal({
+      trade_id: "t1",
+      proposer_id: "alice",
+      receiver_id: "bob",
+      offered_items: [{ card: cardB, quantity: 1 }],
+      requested_items: [{ card: cardA, quantity: 1 }],
+      cash_adjustment: -10.335,
+    });
+
+    const resolver = (card: any) => (card.card_id === "a" ? 100 : 200);
+
+    expect(netTradeValue(trade, resolver)).toBe(-110.33);
   });
 });
 

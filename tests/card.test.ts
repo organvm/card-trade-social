@@ -103,6 +103,24 @@ describe("createCard", () => {
     expect(card.variants).toHaveLength(1);
     expect(card.variants[0].market_price).toBe(100);
   });
+
+  it("should preserve optional metadata fields", () => {
+    const card = createCard({
+      card_id: "c3",
+      name: "Pikachu",
+      game: "pokemon",
+      set_code: "BS",
+      set_name: "Base Set",
+      rarity: "common",
+      condition: "lightly_played",
+      collector_number: "58/102",
+      image_uri: "https://images.example.test/pikachu.png",
+    });
+
+    expect(card.collector_number).toBe("58/102");
+    expect(card.image_uri).toBe("https://images.example.test/pikachu.png");
+    expect(card.updated_at).toBe(card.created_at);
+  });
 });
 
 describe("bestVariantPrice", () => {

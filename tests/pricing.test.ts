@@ -7,7 +7,21 @@ import {
   detectArbitrage,
   calculatePriceChanges,
 } from "../src/pricing";
-import type { PriceHistory, PricePoint } from "../src/pricing";
+import type { PricePoint, PriceSource } from "../src/pricing";
+
+function makePoint(
+  source: PriceSource,
+  price: number,
+  daysAgo = 0,
+  is_sold = true
+): PricePoint {
+  return {
+    source,
+    price,
+    is_sold,
+    timestamp: new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000),
+  };
+}
 
 describe("createPriceHistory", () => {
   it("should create empty price history", () => {
@@ -65,6 +79,47 @@ describe("calculateHydraPrice", () => {
     const result = calculateHydraPrice(h);
     expect(result.confidence).toBe(1);
   });
+
+  it("should ignore stale data when calculating the current price", () => {
+    const h = createPriceHistory("c1");
+    h.points.push(
+      makePoint("tcgplayer", 1_000, 45),
+      makePoint("tcgplayer", 100),
+      makePoint("ebay", 110)
+    );
+
+    const result = calculateHydraPrice(h);
+
+    expect(result.price).toBe(105);
+    expect(result.sources_used).toBe(2);
+  });
+
+  it("should calculate from filtered points after dropping an outlier", () => {
+    const h = createPriceHistory("c1");
+    h.points.push(
+      makePoint("tcgplayer", 95),
+      makePoint("tcgplayer", 100),
+      makePoint("ebay", 100),
+      makePoint("ebay", 105),
+      makePoint("private_auction", 10_000, 0, false)
+    );
+
+    const result = calculateHydraPrice(h);
+
+    expect(result.price).toBe(100);
+    expect(result.sources_used).toBe(2);
+  });
+
+  it("should return zero when only stale points are available", () => {
+    const h = createPriceHistory("c1");
+    h.points.push(makePoint("tcgplayer", 100, 31), makePoint("ebay", 105, 60));
+
+    const result = calculateHydraPrice(h);
+
+    expect(result.price).toBe(0);
+    expect(result.confidence).toBe(0);
+    expect(result.sources_used).toBe(0);
+  });
 });
 
 describe("getRecentPoints", () => {
@@ -109,6 +164,18 @@ describe("filterOutliers", () => {
     expect(filtered.length).toBeLessThan(points.length);
     expect(filtered.every((p) => p.price < 5000)).toBe(true);
   });
+
+  it("should preserve points inside the IQR fences", () => {
+    const points = [
+      makePoint("tcgplayer", 90),
+      makePoint("tcgplayer", 95),
+      makePoint("ebay", 100),
+      makePoint("ebay", 105),
+      makePoint("cardkingdom", 110),
+    ];
+
+    expect(filterOutliers(points)).toEqual(points);
+  });
 });
 
 describe("detectArbitrage", () => {
@@ -146,6 +213,50 @@ describe("detectArbitrage", () => {
 
     expect(alerts).toHaveLength(0);
   });
+
+  it("should honor a custom minimum spread threshold", () => {
+    const h = createPriceHistory("c1");
+    h.points.push(makePoint("tcgplayer", 100), makePoint("ebay", 120));
+
+    const alerts = detectArbitrage(
+      [{ card_id: "c1", card_name: "Test Card", history: h }],
+      25
+    );
+
+    expect(alerts).toHaveLength(0);
+  });
+
+  it("should sort alerts by spread percentage descending", () => {
+    const smallerSpread = createPriceHistory("c1");
+    smallerSpread.points.push(makePoint("tcgplayer", 100), makePoint("ebay", 150));
+
+    const largerSpread = createPriceHistory("c2");
+    largerSpread.points.push(makePoint("tcgplayer", 10), makePoint("ebay", 25));
+
+    const alerts = detectArbitrage([
+      { card_id: "c1", card_name: "Smaller Spread", history: smallerSpread },
+      { card_id: "c2", card_name: "Larger Spread", history: largerSpread },
+    ]);
+
+    expect(alerts).toHaveLength(2);
+    expect(alerts[0].card_id).toBe("c2");
+    expect(alerts[0].spread_percentage).toBeGreaterThan(alerts[1].spread_percentage);
+  });
+
+  it("should skip cards without two recent pricing sources", () => {
+    const h = createPriceHistory("c1");
+    h.points.push(
+      makePoint("tcgplayer", 100),
+      makePoint("tcgplayer", 105),
+      makePoint("ebay", 200, 10)
+    );
+
+    const alerts = detectArbitrage([
+      { card_id: "c1", card_name: "Single Source", history: h },
+    ]);
+
+    expect(alerts).toHaveLength(0);
+  });
 });
 
 describe("calculatePriceChanges", () => {
@@ -178,5 +289,46 @@ describe("calculatePriceChanges", () => {
     expect(changes).toHaveLength(1);
     expect(changes[0].change).toBe(20);
     expect(changes[0].change_percentage).toBe(20);
+  });
+
+  it("should skip entries missing a previous or current period", () => {
+    const currentOnly = createPriceHistory("c1");
+    currentOnly.points.push(makePoint("tcgplayer", 120));
+
+    const previousOnly = createPriceHistory("c2");
+    previousOnly.points.push(makePoint("tcgplayer", 80, 3));
+
+    const changes = calculatePriceChanges([
+      { card_id: "c1", card_name: "Current Only", history: currentOnly },
+      { card_id: "c2", card_name: "Previous Only", history: previousOnly },
+    ]);
+
+    expect(changes).toHaveLength(0);
+  });
+
+  it("should sort changes by absolute percentage and handle zero previous average", () => {
+    const decline = createPriceHistory("c1");
+    decline.points.push(makePoint("tcgplayer", 100, 3), makePoint("tcgplayer", 50));
+
+    const fromZero = createPriceHistory("c2");
+    fromZero.points.push(makePoint("ebay", 0, 3), makePoint("ebay", 10));
+
+    const changes = calculatePriceChanges([
+      { card_id: "c1", card_name: "Decline", history: decline },
+      { card_id: "c2", card_name: "From Zero", history: fromZero },
+    ]);
+
+    expect(changes).toHaveLength(2);
+    expect(changes[0]).toMatchObject({
+      card_id: "c1",
+      change: -50,
+      change_percentage: -50,
+    });
+    expect(changes[1]).toMatchObject({
+      card_id: "c2",
+      previous_price: 0,
+      current_price: 10,
+      change_percentage: 0,
+    });
   });
 });
