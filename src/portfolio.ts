@@ -4,7 +4,7 @@
 
 import type { Card, CardGame, Rarity } from "./card";
 import { bestVariantPrice, adjustedPrice } from "./card";
-import type { SubscriptionState } from "./subscription";
+import type { EntitlementSubject } from "./subscription";
 import {
   getCatalogingLimits,
   hasEntitlement,
@@ -190,7 +190,7 @@ export function getStats(portfolio: Portfolio): PortfolioStats {
  */
 export function getAdvancedAnalytics(
   portfolio: Portfolio,
-  subscription: SubscriptionState,
+  subscription: EntitlementSubject,
   now: Date = new Date()
 ): AdvancedPortfolioAnalytics {
   requireEntitlement(subscription, "portfolio.analytics.advanced", now);
@@ -246,7 +246,7 @@ export function getAdvancedAnalytics(
  */
 export function canCatalogCards(
   portfolio: Portfolio,
-  subscription: SubscriptionState,
+  subscription: EntitlementSubject,
   requested_cards: number = 1,
   now: Date = new Date()
 ): CatalogingDecision {
@@ -270,7 +270,7 @@ export function canCatalogCards(
 
 export function assertCanCatalogCards(
   portfolio: Portfolio,
-  subscription: SubscriptionState,
+  subscription: EntitlementSubject,
   requested_cards: number = 1,
   now: Date = new Date()
 ): void {

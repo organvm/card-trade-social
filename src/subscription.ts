@@ -1,11 +1,14 @@
 /**
- * Subscription and checkout scaffolding for Hydra Pro and in-app purchases.
+ * Billing, license, and entitlement helpers for Hydra Pro and in-app purchases.
  *
- * This module intentionally avoids importing the Stripe SDK. API routes can pass
- * the returned params directly to `stripe.checkout.sessions.create(...)`.
+ * This module intentionally avoids importing provider SDKs. API routes can pass
+ * the returned params to Stripe or Lemon Squeezy clients while keeping feature
+ * gates testable in this domain package.
  */
 
 export type SubscriptionTier = "free" | "pro";
+
+export type BillingProvider = "stripe" | "lemon_squeezy";
 
 export type SubscriptionStatus =
   | "none"
@@ -18,6 +21,8 @@ export type SubscriptionStatus =
   | "unpaid"
   | "paused";
 
+export type LicenseStatus = "inactive" | "active" | "expired" | "disabled";
+
 export type BillingInterval = "month" | "year";
 
 export type Entitlement =
@@ -26,7 +31,19 @@ export type Entitlement =
   | "portfolio.catalog.basic"
   | "portfolio.catalog.unlimited"
   | "portfolio.catalog.bulk_import"
-  | "portfolio.alerts.unlimited";
+  | "portfolio.alerts.unlimited"
+  | "social.creator_buy_lists.premium"
+  | "social.copy_trade"
+  | "genai.proxy_print";
+
+export type PremiumFeature =
+  | "advanced_portfolio_analytics"
+  | "unlimited_cataloging"
+  | "bulk_import"
+  | "unlimited_alerts"
+  | "premium_creator_buy_lists"
+  | "copy_trading"
+  | "proxy_printing";
 
 export type InAppProductId =
   | "proxy_print_credit"
@@ -37,13 +54,39 @@ export interface SubscriptionState {
   user_id: string;
   tier: SubscriptionTier;
   status: SubscriptionStatus;
+  provider?: BillingProvider;
   stripe_customer_id?: string;
   stripe_subscription_id?: string;
   stripe_price_id?: string;
+  lemon_squeezy_customer_id?: string;
+  lemon_squeezy_subscription_id?: string;
+  lemon_squeezy_variant_id?: string;
   current_period_end?: Date;
   cancel_at_period_end: boolean;
   updated_at: Date;
 }
+
+export interface LicenseState {
+  user_id: string;
+  tier: SubscriptionTier;
+  provider: "lemon_squeezy";
+  status: LicenseStatus;
+  license_key_id: string;
+  license_key_last4?: string;
+  instance_id?: string;
+  customer_id?: string;
+  customer_email?: string;
+  product_id?: string;
+  product_name?: string;
+  variant_id?: string;
+  variant_name?: string;
+  provider_error?: string;
+  expires_at?: Date;
+  activated_at?: Date;
+  updated_at: Date;
+}
+
+export type EntitlementSubject = SubscriptionState | LicenseState;
 
 export interface SubscriptionPlan {
   tier: SubscriptionTier;
@@ -91,6 +134,47 @@ export interface StripeCheckoutSessionParams {
   };
 }
 
+export interface LemonSqueezyCheckoutSessionParams {
+  data: {
+    type: "checkouts";
+    attributes: {
+      product_options: {
+        redirect_url: string;
+        enabled_variants: number[];
+      };
+      checkout_options: {
+        discount: boolean;
+        embed?: boolean;
+      };
+      checkout_data: {
+        email?: string;
+        name?: string;
+        custom: Record<string, string>;
+        variant_quantities?: Array<{
+          variant_id: number;
+          quantity: number;
+        }>;
+      };
+      expires_at?: string | null;
+      test_mode?: boolean;
+    };
+    relationships: {
+      store: {
+        data: {
+          type: "stores";
+          id: string;
+        };
+      };
+      variant: {
+        data: {
+          type: "variants";
+          id: string;
+        };
+      };
+    };
+  };
+}
+
 export interface StripeCheckoutSessionSnapshot {
   id: string;
   mode: "subscription" | "payment";
@@ -125,6 +209,20 @@ export interface ProCheckoutParams {
   customer_email?: string;
 }
 
+export interface LemonSqueezyProCheckoutParams {
+  user_id: string;
+  store_id: string | number;
+  variant_id: string | number;
+  billing_interval: BillingInterval;
+  success_url: string;
+  cancel_url?: string;
+  customer_email?: string;
+  customer_name?: string;
+  embed?: boolean;
+  test_mode?: boolean;
+  expires_at?: Date;
+}
+
 export interface InAppPurchaseCheckoutParams {
   user_id: string;
   product_id: InAppProductId;
@@ -135,6 +233,33 @@ export interface InAppPurchaseCheckoutParams {
   stripe_customer_id?: string;
   customer_email?: string;
 }
+
+export interface LemonSqueezyInAppPurchaseCheckoutParams {
+  user_id: string;
+  store_id: string | number;
+  variant_id: string | number;
+  product_id: InAppProductId;
+  quantity?: number;
+  success_url: string;
+  cancel_url?: string;
+  customer_email?: string;
+  customer_name?: string;
+  embed?: boolean;
+  test_mode?: boolean;
+  expires_at?: Date;
+}
+
+export type ProBillingCheckoutParams =
+  | ({ provider: "stripe" } & ProCheckoutParams)
+  | ({ provider: "lemon_squeezy" } & LemonSqueezyProCheckoutParams);
+
+export type InAppPurchaseBillingCheckoutParams =
+  | ({ provider: "stripe" } & InAppPurchaseCheckoutParams)
+  | ({ provider: "lemon_squeezy" } & LemonSqueezyInAppPurchaseCheckoutParams);
+
+export type BillingCheckoutSessionParams =
+  | StripeCheckoutSessionParams
+  | LemonSqueezyCheckoutSessionParams;
 
 export interface StripeSubscriptionSnapshot {
   id: string;
@@ -150,6 +275,61 @@ export interface StripeSubscriptionSnapshot {
     }>;
   };
   metadata?: Record<string, string | undefined>;
+}
+
+export interface LemonSqueezySubscriptionSnapshot {
+  id: string | number;
+  attributes?: {
+    status?: string;
+    customer_id?: string | number;
+    variant_id?: string | number;
+    renews_at?: string | null;
+    ends_at?: string | null;
+    cancelled?: boolean;
+    user_email?: string;
+  };
+  meta?: {
+    custom_data?: Record<string, string | undefined>;
+  };
+}
+
+export interface LemonSqueezyLicenseKeySnapshot {
+  id: string | number;
+  status: LicenseStatus;
+  key?: string;
+  expires_at?: string | null;
+}
+
+export interface LemonSqueezyLicenseInstanceSnapshot {
+  id: string;
+  name?: string;
+  created_at?: string;
+}
+
+export interface LemonSqueezyLicenseMetaSnapshot {
+  customer_id?: string | number;
+  customer_email?: string;
+  product_id?: string | number;
+  product_name?: string;
+  variant_id?: string | number;
+  variant_name?: string;
+}
+
+export interface LemonSqueezyLicenseSnapshot {
+  activated?: boolean;
+  valid?: boolean;
+  error?: string | null;
+  license_key: LemonSqueezyLicenseKeySnapshot;
+  instance?: LemonSqueezyLicenseInstanceSnapshot | null;
+  meta?: LemonSqueezyLicenseMetaSnapshot;
+}
+
+export interface FeatureGateDecision {
+  feature: PremiumFeature;
+  entitlement: Entitlement;
+  allowed: boolean;
+  tier: SubscriptionTier;
+  requires_pro: boolean;
 }
 
 export const FREE_PLAN: SubscriptionPlan = {
@@ -172,6 +352,9 @@ export const PRO_PLAN: SubscriptionPlan = {
     "portfolio.catalog.unlimited",
     "portfolio.catalog.bulk_import",
     "portfolio.alerts.unlimited",
+    "social.creator_buy_lists.premium",
+    "social.copy_trade",
+    "genai.proxy_print",
   ],
 };
 
@@ -223,6 +406,17 @@ export const IN_APP_PRODUCTS: Record<InAppProductId, InAppProduct> = {
 };
 
 const ACTIVE_STATUSES = new Set<SubscriptionStatus>(["active", "trialing"]);
+const ACTIVE_LICENSE_STATUSES = new Set<LicenseStatus>(["active"]);
+
+export const FEATURE_ENTITLEMENTS: Record<PremiumFeature, Entitlement> = {
+  advanced_portfolio_analytics: "portfolio.analytics.advanced",
+  unlimited_cataloging: "portfolio.catalog.unlimited",
+  bulk_import: "portfolio.catalog.bulk_import",
+  unlimited_alerts: "portfolio.alerts.unlimited",
+  premium_creator_buy_lists: "social.creator_buy_lists.premium",
+  copy_trading: "social.copy_trade",
+  proxy_printing: "genai.proxy_print",
+};
 
 export function createFreeSubscription(user_id: string): SubscriptionState {
   return {
@@ -248,17 +442,37 @@ export function isSubscriptionActive(
   );
 }
 
+export function isLicenseActive(
+  license: LicenseState,
+  now: Date = new Date()
+): boolean {
+  if (!ACTIVE_LICENSE_STATUSES.has(license.status)) {
+    return false;
+  }
+
+  return (
+    license.expires_at === undefined ||
+    license.expires_at.getTime() > now.getTime()
+  );
+}
+
 export function effectiveTier(
-  subscription: SubscriptionState,
+  subscription: EntitlementSubject,
   now: Date = new Date()
 ): SubscriptionTier {
+  if (isLicenseState(subscription)) {
+    return subscription.tier === "pro" && isLicenseActive(subscription, now)
+      ? "pro"
+      : "free";
+  }
+
   return subscription.tier === "pro" && isSubscriptionActive(subscription, now)
     ? "pro"
     : "free";
 }
 
 export function hasEntitlement(
-  subscription: SubscriptionState,
+  subscription: EntitlementSubject,
   entitlement: Entitlement,
   now: Date = new Date()
 ): boolean {
@@ -267,7 +481,7 @@ export function hasEntitlement(
 }
 
 export function requireEntitlement(
-  subscription: SubscriptionState,
+  subscription: EntitlementSubject,
   entitlement: Entitlement,
   now: Date = new Date()
 ): void {
@@ -277,10 +491,37 @@ export function requireEntitlement(
 }
 
 export function getCatalogingLimits(
-  subscription: SubscriptionState,
+  subscription: EntitlementSubject,
   now: Date = new Date()
 ): CatalogingLimits {
   return CATALOGING_LIMITS[effectiveTier(subscription, now)];
+}
+
+export function canUsePremiumFeature(
+  subscription: EntitlementSubject,
+  feature: PremiumFeature,
+  now: Date = new Date()
+): FeatureGateDecision {
+  const entitlement = FEATURE_ENTITLEMENTS[feature];
+  const tier = effectiveTier(subscription, now);
+  const allowed = hasEntitlement(subscription, entitlement, now);
+
+  return {
+    feature,
+    entitlement,
+    allowed,
+    tier,
+    requires_pro: !allowed,
+  };
+}
+
+export function requirePremiumFeature(
+  subscription: EntitlementSubject,
+  feature: PremiumFeature,
+  now: Date = new Date()
+): void {
+  const entitlement = FEATURE_ENTITLEMENTS[feature];
+  requireEntitlement(subscription, entitlement, now);
 }
 
 export function createProCheckoutSession(
@@ -310,6 +551,44 @@ export function createProCheckoutSession(
     metadata,
     subscription_data: { metadata },
   };
+}
+
+export const createStripeProCheckoutSession = createProCheckoutSession;
+
+export function createLemonSqueezyProCheckoutSession(
+  params: LemonSqueezyProCheckoutParams
+): LemonSqueezyCheckoutSessionParams {
+  assertNonEmpty(params.user_id, "user_id");
+  assertCheckoutUrl(params.success_url, "success_url");
+  if (params.cancel_url !== undefined) {
+    assertCheckoutUrl(params.cancel_url, "cancel_url");
+  }
+
+  const store_id = normalizeProviderId(params.store_id, "store_id");
+  const variant_id = normalizeProviderId(params.variant_id, "variant_id");
+  const numeric_variant_id = normalizeProviderNumericId(
+    params.variant_id,
+    "variant_id"
+  );
+
+  return createLemonSqueezyCheckoutRequest({
+    store_id,
+    variant_id,
+    numeric_variant_id,
+    success_url: params.success_url,
+    customer_email: params.customer_email,
+    customer_name: params.customer_name,
+    embed: params.embed,
+    test_mode: params.test_mode,
+    expires_at: params.expires_at,
+    custom: {
+      user_id: params.user_id,
+      product: "hydra_pro",
+      tier: "pro",
+      billing_interval: params.billing_interval,
+      cancel_url: params.cancel_url ?? "",
+    },
+  });
 }
 
 export function createInAppPurchaseCheckoutSession(
@@ -350,6 +629,118 @@ export function createInAppPurchaseCheckoutSession(
   };
 }
 
+export const createStripeInAppPurchaseCheckoutSession =
+  createInAppPurchaseCheckoutSession;
+
+export function createLemonSqueezyInAppPurchaseCheckoutSession(
+  params: LemonSqueezyInAppPurchaseCheckoutParams
+): LemonSqueezyCheckoutSessionParams {
+  assertNonEmpty(params.user_id, "user_id");
+  assertCheckoutUrl(params.success_url, "success_url");
+  if (params.cancel_url !== undefined) {
+    assertCheckoutUrl(params.cancel_url, "cancel_url");
+  }
+
+  const product = IN_APP_PRODUCTS[params.product_id];
+  if (!product) {
+    throw new Error(`Unknown in-app product: ${params.product_id}`);
+  }
+
+  const quantity = params.quantity ?? 1;
+  if (!Number.isInteger(quantity) || quantity <= 0) {
+    throw new Error("Quantity must be a positive integer");
+  }
+
+  const store_id = normalizeProviderId(params.store_id, "store_id");
+  const variant_id = normalizeProviderId(params.variant_id, "variant_id");
+  const numeric_variant_id = normalizeProviderNumericId(
+    params.variant_id,
+    "variant_id"
+  );
+
+  return createLemonSqueezyCheckoutRequest({
+    store_id,
+    variant_id,
+    numeric_variant_id,
+    quantity,
+    success_url: params.success_url,
+    customer_email: params.customer_email,
+    customer_name: params.customer_name,
+    embed: params.embed,
+    test_mode: params.test_mode,
+    expires_at: params.expires_at,
+    custom: {
+      user_id: params.user_id,
+      product_id: product.product_id,
+      product_kind: product.kind,
+      quantity: quantity.toString(),
+      cancel_url: params.cancel_url ?? "",
+    },
+  });
+}
+
+export function createProBillingCheckoutSession(
+  params: ProBillingCheckoutParams
+): BillingCheckoutSessionParams {
+  if (params.provider === "stripe") {
+    return createProCheckoutSession({
+      user_id: params.user_id,
+      price_id: params.price_id,
+      billing_interval: params.billing_interval,
+      success_url: params.success_url,
+      cancel_url: params.cancel_url,
+      stripe_customer_id: params.stripe_customer_id,
+      customer_email: params.customer_email,
+    });
+  }
+
+  return createLemonSqueezyProCheckoutSession({
+    user_id: params.user_id,
+    store_id: params.store_id,
+    variant_id: params.variant_id,
+    billing_interval: params.billing_interval,
+    success_url: params.success_url,
+    cancel_url: params.cancel_url,
+    customer_email: params.customer_email,
+    customer_name: params.customer_name,
+    embed: params.embed,
+    test_mode: params.test_mode,
+    expires_at: params.expires_at,
+  });
+}
+
+export function createInAppPurchaseBillingCheckoutSession(
+  params: InAppPurchaseBillingCheckoutParams
+): BillingCheckoutSessionParams {
+  if (params.provider === "stripe") {
+    return createInAppPurchaseCheckoutSession({
+      user_id: params.user_id,
+      product_id: params.product_id,
+      price_id: params.price_id,
+      quantity: params.quantity,
+      success_url: params.success_url,
+      cancel_url: params.cancel_url,
+      stripe_customer_id: params.stripe_customer_id,
+      customer_email: params.customer_email,
+    });
+  }
+
+  return createLemonSqueezyInAppPurchaseCheckoutSession({
+    user_id: params.user_id,
+    store_id: params.store_id,
+    variant_id: params.variant_id,
+    product_id: params.product_id,
+    quantity: params.quantity,
+    success_url: params.success_url,
+    cancel_url: params.cancel_url,
+    customer_email: params.customer_email,
+    customer_name: params.customer_name,
+    embed: params.embed,
+    test_mode: params.test_mode,
+    expires_at: params.expires_at,
+  });
+}
+
 export function subscriptionFromStripeSnapshot(
   user_id: string,
   snapshot: StripeSubscriptionSnapshot,
@@ -367,6 +758,7 @@ export function subscriptionFromStripeSnapshot(
   return {
     user_id,
     tier: isProPrice ? "pro" : "free",
+    provider: "stripe",
     status: snapshot.status,
     stripe_customer_id: snapshot.customer,
     stripe_subscription_id: snapshot.id,
@@ -376,6 +768,91 @@ export function subscriptionFromStripeSnapshot(
         ? undefined
         : new Date(snapshot.current_period_end * 1000),
     cancel_at_period_end: snapshot.cancel_at_period_end ?? false,
+    updated_at: new Date(),
+  };
+}
+
+export function subscriptionFromLemonSqueezySnapshot(
+  user_id: string,
+  snapshot: LemonSqueezySubscriptionSnapshot,
+  pro_variant_ids: Array<string | number> = []
+): SubscriptionState {
+  assertNonEmpty(user_id, "user_id");
+  const subscription_id = normalizeProviderId(
+    snapshot.id,
+    "lemon_squeezy_subscription_id"
+  );
+
+  const attributes = snapshot.attributes ?? {};
+  const customer_id =
+    attributes.customer_id === undefined
+      ? undefined
+      : normalizeProviderId(attributes.customer_id, "lemon_squeezy_customer_id");
+  const variant_id =
+    attributes.variant_id === undefined
+      ? undefined
+      : normalizeProviderId(attributes.variant_id, "lemon_squeezy_variant_id");
+  const status = normalizeLemonSqueezySubscriptionStatus(attributes.status);
+  const customTier = snapshot.meta?.custom_data?.tier;
+  const isProVariant =
+    customTier === "pro" ||
+    (variant_id !== undefined &&
+      pro_variant_ids.map(String).includes(variant_id));
+
+  return {
+    user_id,
+    tier: isProVariant ? "pro" : "free",
+    provider: "lemon_squeezy",
+    status,
+    lemon_squeezy_customer_id: customer_id,
+    lemon_squeezy_subscription_id: subscription_id,
+    lemon_squeezy_variant_id: variant_id,
+    current_period_end: parseOptionalDate(
+      attributes.renews_at ?? attributes.ends_at
+    ),
+    cancel_at_period_end: attributes.cancelled ?? false,
+    updated_at: new Date(),
+  };
+}
+
+export function licenseFromLemonSqueezySnapshot(
+  user_id: string,
+  snapshot: LemonSqueezyLicenseSnapshot,
+  pro_variant_ids: Array<string | number> = []
+): LicenseState {
+  assertNonEmpty(user_id, "user_id");
+  const license = snapshot.license_key;
+  const license_key_id = normalizeProviderId(license.id, "license_key_id");
+  const variant_id =
+    snapshot.meta?.variant_id === undefined
+      ? undefined
+      : normalizeProviderId(snapshot.meta.variant_id, "variant_id");
+  const tier = isProLemonSqueezyLicense(snapshot, pro_variant_ids) ? "pro" : "free";
+  const responseAccepted = snapshot.activated ?? snapshot.valid ?? true;
+
+  return {
+    user_id,
+    tier,
+    provider: "lemon_squeezy",
+    status: responseAccepted ? license.status : "inactive",
+    license_key_id,
+    license_key_last4: maskLicenseKeyLast4(license.key),
+    instance_id: snapshot.instance?.id,
+    customer_id:
+      snapshot.meta?.customer_id === undefined
+        ? undefined
+        : normalizeProviderId(snapshot.meta.customer_id, "customer_id"),
+    customer_email: snapshot.meta?.customer_email,
+    product_id:
+      snapshot.meta?.product_id === undefined
+        ? undefined
+        : normalizeProviderId(snapshot.meta.product_id, "product_id"),
+    product_name: snapshot.meta?.product_name,
+    variant_id,
+    variant_name: snapshot.meta?.variant_name,
+    provider_error: snapshot.error ?? undefined,
+    expires_at: parseOptionalDate(license.expires_at),
+    activated_at: parseOptionalDate(snapshot.instance?.created_at),
     updated_at: new Date(),
   };
 }
@@ -433,4 +910,166 @@ function assertCheckoutUrl(value: string, field: string): void {
 
 function isInAppProductId(value: string | undefined): value is InAppProductId {
   return value !== undefined && value in IN_APP_PRODUCTS;
+}
+
+function isLicenseState(value: EntitlementSubject): value is LicenseState {
+  return "license_key_id" in value;
+}
+
+function normalizeProviderId(value: string | number, field: string): string {
+  const normalized = String(value);
+  assertNonEmpty(normalized, field);
+  return normalized;
+}
+
+function normalizeProviderNumericId(value: string | number, field: string): number {
+  const normalized = Number(value);
+  if (!Number.isInteger(normalized) || normalized <= 0) {
+    throw new Error(`${field} must be a positive integer`);
+  }
+  return normalized;
+}
+
+function createLemonSqueezyCheckoutRequest(params: {
+  store_id: string;
+  variant_id: string;
+  numeric_variant_id: number;
+  quantity?: number;
+  success_url: string;
+  customer_email?: string;
+  customer_name?: string;
+  embed?: boolean;
+  test_mode?: boolean;
+  expires_at?: Date;
+  custom: Record<string, string>;
+}): LemonSqueezyCheckoutSessionParams {
+  const checkout_data: LemonSqueezyCheckoutSessionParams["data"]["attributes"]["checkout_data"] = {
+    custom: compactMetadata(params.custom),
+  };
+
+  if (params.customer_email !== undefined) {
+    assertNonEmpty(params.customer_email, "customer_email");
+    checkout_data.email = params.customer_email;
+  }
+  if (params.customer_name !== undefined) {
+    assertNonEmpty(params.customer_name, "customer_name");
+    checkout_data.name = params.customer_name;
+  }
+  if (params.quantity !== undefined) {
+    checkout_data.variant_quantities = [
+      { variant_id: params.numeric_variant_id, quantity: params.quantity },
+    ];
+  }
+
+  const checkout_options: LemonSqueezyCheckoutSessionParams["data"]["attributes"]["checkout_options"] = {
+    discount: true,
+  };
+  if (params.embed !== undefined) {
+    checkout_options.embed = params.embed;
+  }
+
+  const attributes: LemonSqueezyCheckoutSessionParams["data"]["attributes"] = {
+    product_options: {
+      redirect_url: params.success_url,
+      enabled_variants: [params.numeric_variant_id],
+    },
+    checkout_options,
+    checkout_data,
+  };
+  if (params.expires_at !== undefined) {
+    attributes.expires_at = params.expires_at.toISOString();
+  }
+  if (params.test_mode !== undefined) {
+    attributes.test_mode = params.test_mode;
+  }
+
+  return {
+    data: {
+      type: "checkouts",
+      attributes,
+      relationships: {
+        store: {
+          data: {
+            type: "stores",
+            id: params.store_id,
+          },
+        },
+        variant: {
+          data: {
+            type: "variants",
+            id: params.variant_id,
+          },
+        },
+      },
+    },
+  };
+}
+
+function compactMetadata(metadata: Record<string, string>): Record<string, string> {
+  const compacted: Record<string, string> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (value !== "") {
+      compacted[key] = value;
+    }
+  }
+  return compacted;
+}
+
+function normalizeLemonSqueezySubscriptionStatus(
+  status: string | undefined
+): SubscriptionStatus {
+  switch (status) {
+    case "active":
+    case "on_trial":
+      return status === "on_trial" ? "trialing" : "active";
+    case "past_due":
+      return "past_due";
+    case "unpaid":
+      return "unpaid";
+    case "cancelled":
+    case "expired":
+      return "canceled";
+    case "paused":
+      return "paused";
+    default:
+      return "none";
+  }
+}
+
+function parseOptionalDate(value: string | null | undefined): Date | undefined {
+  if (value === undefined || value === null || value.trim() === "") {
+    return undefined;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid date: ${value}`);
+  }
+
+  return parsed;
+}
+
+function isProLemonSqueezyLicense(
+  snapshot: LemonSqueezyLicenseSnapshot,
+  pro_variant_ids: Array<string | number>
+): boolean {
+  const variantId = snapshot.meta?.variant_id;
+  if (
+    variantId !== undefined &&
+    pro_variant_ids.map(String).includes(String(variantId))
+  ) {
+    return true;
+  }
+
+  const productName = snapshot.meta?.product_name?.toLowerCase() ?? "";
+  const variantName = snapshot.meta?.variant_name?.toLowerCase() ?? "";
+  return productName.includes("pro") || variantName.includes("pro");
+}
+
+function maskLicenseKeyLast4(value: string | undefined): string | undefined {
+  if (value === undefined || value.length < 4) {
+    return undefined;
+  }
+
+  return value.slice(-4);
 }

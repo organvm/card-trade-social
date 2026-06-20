@@ -206,6 +206,11 @@ STRIPE_PRICE_PRO_YEARLY=     # Stripe Price ID for Hydra Pro yearly
 STRIPE_PRICE_PROXY_PRINT_CREDIT=      # Stripe Price ID for proxy print IAP
 STRIPE_PRICE_AVATAR_SKIN=             # Stripe Price ID for avatar skin IAP
 STRIPE_PRICE_GUILD_BANNER=            # Stripe Price ID for guild banner IAP
+LEMON_SQUEEZY_API_KEY=                # Optional Merchant of Record checkout
+LEMON_SQUEEZY_WEBHOOK_SECRET=         # Optional webhook signature secret
+LEMON_SQUEEZY_STORE_ID=               # Lemon Squeezy store ID
+LEMON_SQUEEZY_VARIANT_PRO_MONTHLY=    # Lemon Squeezy Hydra Pro monthly variant
+LEMON_SQUEEZY_VARIANT_PRO_YEARLY=     # Lemon Squeezy Hydra Pro yearly variant
 DATABASE_URL=                # PostgreSQL connection string
 REDIS_URL=                   # Redis connection string
 
@@ -261,12 +266,15 @@ The Market Interface operates on a tiered data model to balance cost, latency, a
 
 ### Billing and Feature Gates
 
-Hydra Pro gates advanced portfolio analytics, unlimited cataloging, bulk import, and unlimited alerts. Free users keep basic portfolio valuation and can catalog up to 100 cards. The TypeScript scaffold exposes entitlement checks plus Stripe Checkout request builders; API routes supply live Stripe clients and Price IDs from environment variables.
+Hydra Pro gates advanced portfolio analytics, unlimited cataloging, bulk import, unlimited alerts, premium creator buy lists, copy-trading, and proxy-printing. Free users keep basic portfolio valuation, basic search/filtering, and can catalog up to 100 cards. The TypeScript scaffold exposes entitlement checks plus Stripe and Lemon Squeezy checkout request builders; API routes supply live provider clients and Price/Variant IDs from environment variables.
 
 ```typescript
 import {
   createProCheckoutSession,
   createInAppPurchaseCheckoutSession,
+  createLemonSqueezyProCheckoutSession,
+  licenseFromLemonSqueezySnapshot,
+  canUsePremiumFeature,
   subscriptionFromStripeSnapshot,
   inAppPurchaseReceiptFromCheckoutSession,
 } from 'card-trade-social';
@@ -281,6 +289,25 @@ const checkoutParams = createProCheckoutSession({
   stripe_customer_id: user.stripe_customer_id,
 });
 const session = await stripe.checkout.sessions.create(checkoutParams);
+
+// Alternative: POST /api/v1/billing/checkout/pro via Lemon Squeezy
+const lemonCheckout = createLemonSqueezyProCheckoutSession({
+  user_id: user.id,
+  store_id: process.env.LEMON_SQUEEZY_STORE_ID!,
+  variant_id: process.env.LEMON_SQUEEZY_VARIANT_PRO_MONTHLY!,
+  billing_interval: 'month',
+  success_url: 'https://hydra.gg/billing/success',
+  customer_email: user.email,
+});
+const checkout = await fetch('https://api.lemonsqueezy.com/v1/checkouts', {
+  method: 'POST',
+  headers: {
+    Accept: 'application/vnd.api+json',
+    'Content-Type': 'application/vnd.api+json',
+    Authorization: `Bearer ${process.env.LEMON_SQUEEZY_API_KEY!}`,
+  },
+  body: JSON.stringify(lemonCheckout),
+});
 
 // POST /api/v1/billing/checkout/iap
 const purchaseParams = createInAppPurchaseCheckoutSession({
@@ -298,6 +325,15 @@ const subscriptionState = subscriptionFromStripeSnapshot(user.id, stripeSubscrip
   process.env.STRIPE_PRICE_PRO_YEARLY!,
 ]);
 const purchaseReceipt = inAppPurchaseReceiptFromCheckoutSession(stripeCheckoutSession);
+
+// POST /api/v1/billing/license/activate or /validate
+const licenseState = licenseFromLemonSqueezySnapshot(user.id, lemonLicenseResponse, [
+  process.env.LEMON_SQUEEZY_VARIANT_PRO_MONTHLY!,
+  process.env.LEMON_SQUEEZY_VARIANT_PRO_YEARLY!,
+]);
+
+// Any premium feature can be checked against a subscription or license state.
+const gate = canUsePremiumFeature(subscriptionState, 'copy_trading');
 ```
 
 ---

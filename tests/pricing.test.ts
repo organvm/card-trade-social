@@ -5,9 +5,14 @@ import {
   getRecentPoints,
   filterOutliers,
   detectArbitrage,
+  detectArbitrageWithGate,
+  FREE_ARBITRAGE_ALERT_LIMIT,
+  requireUnlimitedArbitrageAlerts,
   calculatePriceChanges,
 } from "../src/pricing";
 import type { PricePoint, PriceSource } from "../src/pricing";
+import { createFreeSubscription } from "../src/subscription";
+import type { SubscriptionState } from "../src/subscription";
 
 function makePoint(
   source: PriceSource,
@@ -20,6 +25,16 @@ function makePoint(
     price,
     is_sold,
     timestamp: new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000),
+  };
+}
+
+function activePro(): SubscriptionState {
+  return {
+    user_id: "user-1",
+    tier: "pro",
+    status: "active",
+    cancel_at_period_end: false,
+    updated_at: new Date(),
   };
 }
 
@@ -256,6 +271,63 @@ describe("detectArbitrage", () => {
     ]);
 
     expect(alerts).toHaveLength(0);
+  });
+
+  it("should cap arbitrage alerts for free users", () => {
+    const entries = Array.from({ length: FREE_ARBITRAGE_ALERT_LIMIT + 2 }, (_, index) => {
+      const history = createPriceHistory(`c${index}`);
+      history.points.push(makePoint("tcgplayer", 10 + index));
+      history.points.push(makePoint("ebay", 30 + index * 2));
+
+      return {
+        card_id: `c${index}`,
+        card_name: `Alert Card ${index}`,
+        history,
+      };
+    });
+
+    const result = detectArbitrageWithGate(
+      entries,
+      createFreeSubscription("user-1")
+    );
+
+    expect(result.total_alerts).toBe(FREE_ARBITRAGE_ALERT_LIMIT + 2);
+    expect(result.alerts).toHaveLength(FREE_ARBITRAGE_ALERT_LIMIT);
+    expect(result.truncated).toBe(true);
+    expect(result.requires_pro).toBe(true);
+  });
+
+  it("should allow unlimited arbitrage alerts for Pro users", () => {
+    const entries = Array.from({ length: FREE_ARBITRAGE_ALERT_LIMIT + 2 }, (_, index) => {
+      const history = createPriceHistory(`c${index}`);
+      history.points.push(makePoint("tcgplayer", 10 + index));
+      history.points.push(makePoint("ebay", 30 + index * 2));
+
+      return {
+        card_id: `c${index}`,
+        card_name: `Alert Card ${index}`,
+        history,
+      };
+    });
+
+    const result = detectArbitrageWithGate(entries, activePro());
+
+    expect(result.total_alerts).toBe(FREE_ARBITRAGE_ALERT_LIMIT + 2);
+    expect(result.alerts).toHaveLength(FREE_ARBITRAGE_ALERT_LIMIT + 2);
+    expect(result.truncated).toBe(false);
+    expect(result.requires_pro).toBe(false);
+    expect(() => requireUnlimitedArbitrageAlerts(activePro())).not.toThrow();
+    expect(() =>
+      requireUnlimitedArbitrageAlerts(createFreeSubscription("user-1"))
+    ).toThrow("Hydra Pro is required");
+  });
+
+  it("should reject invalid free alert limits", () => {
+    expect(() =>
+      detectArbitrageWithGate([], createFreeSubscription("user-1"), {
+        free_alert_limit: -1,
+      })
+    ).toThrow("non-negative integer");
   });
 });
 

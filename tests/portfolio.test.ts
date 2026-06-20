@@ -14,7 +14,7 @@ import {
 import { createCard } from "../src/card";
 import type { Card, CardVariant } from "../src/card";
 import { createFreeSubscription } from "../src/subscription";
-import type { SubscriptionState } from "../src/subscription";
+import type { LicenseState, SubscriptionState } from "../src/subscription";
 
 function makeCard(overrides: Partial<Parameters<typeof createCard>[0]> = {}): Card {
   return createCard({
@@ -227,6 +227,24 @@ describe("getAdvancedAnalytics", () => {
     expect(analytics.unrealized_pnl_percentage).toBe(12.5);
     expect(analytics.largest_position?.card_name).toBe("Black Lotus");
     expect(analytics.positions[0].weight_percentage).toBe(80);
+  });
+
+  it("should allow Pro license holders to use advanced analytics", () => {
+    const p = createPortfolio("user-1");
+    addCard(p, makeCard({ card_id: "c1", condition: "mint" }), 1, 80);
+    const license: LicenseState = {
+      user_id: "user-1",
+      tier: "pro",
+      provider: "lemon_squeezy",
+      status: "active",
+      license_key_id: "license-1",
+      updated_at: new Date(),
+    };
+
+    const analytics = getAdvancedAnalytics(p, license);
+
+    expect(analytics.total_value).toBe(100);
+    expect(analytics.unrealized_pnl).toBe(20);
   });
 
   it("should return empty analytics for an empty Pro portfolio", () => {

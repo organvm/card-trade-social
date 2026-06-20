@@ -3,6 +3,9 @@
  * Aggregates multi-source pricing data and calculates the "Hydra Price".
  */
 
+import type { EntitlementSubject } from "./subscription";
+import { hasEntitlement, requireEntitlement } from "./subscription";
+
 export type PriceSource = "tcgplayer" | "cardkingdom" | "ebay" | "private_auction";
 
 export interface PricePoint {
@@ -36,6 +39,21 @@ export interface ArbitrageAlert {
   spread_percentage: number;
 }
 
+export interface GatedArbitrageOptions {
+  min_spread_percentage?: number;
+  free_alert_limit?: number;
+  now?: Date;
+}
+
+export interface GatedArbitrageAlerts {
+  alerts: ArbitrageAlert[];
+  total_alerts: number;
+  included_alerts: number;
+  free_alert_limit: number;
+  truncated: boolean;
+  requires_pro: boolean;
+}
+
 export interface PriceChange {
   card_id: string;
   card_name: string;
@@ -44,6 +62,8 @@ export interface PriceChange {
   change: number;
   change_percentage: number;
 }
+
+export const FREE_ARBITRAGE_ALERT_LIMIT = 3;
 
 /**
  * Create a new price history tracker for a card.
@@ -193,6 +213,48 @@ export function detectArbitrage(
   }
 
   return alerts.sort((a, b) => b.spread_percentage - a.spread_percentage);
+}
+
+/**
+ * Detect arbitrage alerts while preserving a limited free tier and gating
+ * unlimited alerts behind Hydra Pro.
+ */
+export function detectArbitrageWithGate(
+  histories: { card_id: string; card_name: string; history: PriceHistory }[],
+  subscription: EntitlementSubject,
+  options: GatedArbitrageOptions = {}
+): GatedArbitrageAlerts {
+  const alerts = detectArbitrage(
+    histories,
+    options.min_spread_percentage ?? 15
+  );
+  const freeLimit = options.free_alert_limit ?? FREE_ARBITRAGE_ALERT_LIMIT;
+  if (!Number.isInteger(freeLimit) || freeLimit < 0) {
+    throw new Error("Free alert limit must be a non-negative integer");
+  }
+
+  const unlimited = hasEntitlement(
+    subscription,
+    "portfolio.alerts.unlimited",
+    options.now
+  );
+  const includedAlerts = unlimited ? alerts : alerts.slice(0, freeLimit);
+
+  return {
+    alerts: includedAlerts,
+    total_alerts: alerts.length,
+    included_alerts: includedAlerts.length,
+    free_alert_limit: freeLimit,
+    truncated: !unlimited && alerts.length > freeLimit,
+    requires_pro: !unlimited && alerts.length > freeLimit,
+  };
+}
+
+export function requireUnlimitedArbitrageAlerts(
+  subscription: EntitlementSubject,
+  now: Date = new Date()
+): void {
+  requireEntitlement(subscription, "portfolio.alerts.unlimited", now);
 }
 
 /**

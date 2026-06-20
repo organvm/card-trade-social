@@ -1,16 +1,25 @@
 import {
+  canUsePremiumFeature,
   createFreeSubscription,
   createInAppPurchaseCheckoutSession,
+  createInAppPurchaseBillingCheckoutSession,
+  createLemonSqueezyInAppPurchaseCheckoutSession,
+  createLemonSqueezyProCheckoutSession,
+  createProBillingCheckoutSession,
   createProCheckoutSession,
   effectiveTier,
   getCatalogingLimits,
   hasEntitlement,
   inAppPurchaseReceiptFromCheckoutSession,
+  isLicenseActive,
   isSubscriptionActive,
+  licenseFromLemonSqueezySnapshot,
+  requirePremiumFeature,
   requireEntitlement,
+  subscriptionFromLemonSqueezySnapshot,
   subscriptionFromStripeSnapshot,
 } from "../src/subscription";
-import type { SubscriptionState } from "../src/subscription";
+import type { LicenseState, SubscriptionState } from "../src/subscription";
 
 function activePro(overrides: Partial<SubscriptionState> = {}): SubscriptionState {
   return {
@@ -86,6 +95,48 @@ describe("subscription entitlements", () => {
     expect(() =>
       requireEntitlement(activePro(), "portfolio.analytics.advanced")
     ).not.toThrow();
+  });
+
+  it("should grant premium gates to active Lemon Squeezy licenses", () => {
+    const license: LicenseState = {
+      user_id: "user-1",
+      tier: "pro",
+      provider: "lemon_squeezy",
+      status: "active",
+      license_key_id: "license-1",
+      updated_at: new Date(),
+    };
+
+    expect(isLicenseActive(license)).toBe(true);
+    expect(effectiveTier(license)).toBe("pro");
+    expect(canUsePremiumFeature(license, "copy_trading")).toMatchObject({
+      allowed: true,
+      entitlement: "social.copy_trade",
+      requires_pro: false,
+    });
+    expect(() =>
+      requirePremiumFeature(license, "advanced_portfolio_analytics")
+    ).not.toThrow();
+  });
+
+  it("should deny premium gates for inactive or expired licenses", () => {
+    const license: LicenseState = {
+      user_id: "user-1",
+      tier: "pro",
+      provider: "lemon_squeezy",
+      status: "active",
+      license_key_id: "license-1",
+      expires_at: new Date(Date.now() - 1_000),
+      updated_at: new Date(),
+    };
+
+    expect(isLicenseActive(license)).toBe(false);
+    expect(effectiveTier(license)).toBe("free");
+    expect(canUsePremiumFeature(license, "proxy_printing")).toMatchObject({
+      allowed: false,
+      entitlement: "genai.proxy_print",
+      requires_pro: true,
+    });
   });
 });
 
@@ -205,6 +256,107 @@ describe("Stripe checkout scaffold", () => {
       })
     ).toThrow("Unknown in-app product");
   });
+
+  it("should build a Lemon Squeezy Pro checkout request", () => {
+    const checkout = createLemonSqueezyProCheckoutSession({
+      user_id: "user-1",
+      store_id: 10,
+      variant_id: 20,
+      billing_interval: "year",
+      success_url: "https://hydra.test/billing/success",
+      cancel_url: "https://hydra.test/billing/cancel",
+      customer_email: "collector@example.com",
+      customer_name: "Collector One",
+      test_mode: true,
+    });
+
+    expect(checkout.data.type).toBe("checkouts");
+    expect(checkout.data.relationships.store.data).toEqual({
+      type: "stores",
+      id: "10",
+    });
+    expect(checkout.data.relationships.variant.data).toEqual({
+      type: "variants",
+      id: "20",
+    });
+    expect(checkout.data.attributes.product_options.redirect_url).toBe(
+      "https://hydra.test/billing/success"
+    );
+    expect(checkout.data.attributes.product_options.enabled_variants).toEqual([20]);
+    expect(checkout.data.attributes.checkout_data.email).toBe(
+      "collector@example.com"
+    );
+    expect(checkout.data.attributes.checkout_data.custom).toMatchObject({
+      user_id: "user-1",
+      product: "hydra_pro",
+      tier: "pro",
+      billing_interval: "year",
+      cancel_url: "https://hydra.test/billing/cancel",
+    });
+    expect(checkout.data.attributes.test_mode).toBe(true);
+  });
+
+  it("should build a Lemon Squeezy in-app purchase checkout request", () => {
+    const checkout = createLemonSqueezyInAppPurchaseCheckoutSession({
+      user_id: "user-1",
+      store_id: "10",
+      variant_id: "33",
+      product_id: "proxy_print_credit",
+      quantity: 2,
+      success_url: "https://hydra.test/purchase/success",
+    });
+
+    expect(checkout.data.attributes.checkout_data.variant_quantities).toEqual([
+      { variant_id: 33, quantity: 2 },
+    ]);
+    expect(checkout.data.attributes.checkout_data.custom).toMatchObject({
+      user_id: "user-1",
+      product_id: "proxy_print_credit",
+      product_kind: "consumable",
+      quantity: "2",
+    });
+  });
+
+  it("should reject invalid Lemon Squeezy checkout identifiers", () => {
+    expect(() =>
+      createLemonSqueezyProCheckoutSession({
+        user_id: "user-1",
+        store_id: 10,
+        variant_id: "variant_20",
+        billing_interval: "month",
+        success_url: "https://hydra.test/billing/success",
+      })
+    ).toThrow("variant_id must be a positive integer");
+  });
+
+  it("should dispatch checkout creation by billing provider", () => {
+    const stripeCheckout = createProBillingCheckoutSession({
+      provider: "stripe",
+      user_id: "user-1",
+      price_id: "price_pro_monthly",
+      billing_interval: "month",
+      success_url: "https://hydra.test/billing/success",
+      cancel_url: "https://hydra.test/billing/cancel",
+    });
+    const lemonCheckout = createInAppPurchaseBillingCheckoutSession({
+      provider: "lemon_squeezy",
+      user_id: "user-1",
+      store_id: 10,
+      variant_id: 33,
+      product_id: "avatar_skin",
+      success_url: "https://hydra.test/purchase/success",
+    });
+
+    if (!("mode" in stripeCheckout)) {
+      throw new Error("Expected Stripe checkout payload");
+    }
+    if (!("data" in lemonCheckout)) {
+      throw new Error("Expected Lemon Squeezy checkout payload");
+    }
+
+    expect(stripeCheckout.mode).toBe("subscription");
+    expect(lemonCheckout.data.type).toBe("checkouts");
+  });
 });
 
 describe("subscriptionFromStripeSnapshot", () => {
@@ -279,6 +431,144 @@ describe("subscriptionFromStripeSnapshot", () => {
         status: "active",
       })
     ).toThrow("user_id is required");
+  });
+});
+
+describe("Lemon Squeezy snapshots", () => {
+  it("should map Lemon Squeezy subscriptions to Pro state", () => {
+    const subscription = subscriptionFromLemonSqueezySnapshot(
+      "user-1",
+      {
+        id: 123,
+        attributes: {
+          status: "on_trial",
+          customer_id: 456,
+          variant_id: 789,
+          renews_at: "2026-03-01T00:00:00.000Z",
+          cancelled: true,
+        },
+      },
+      [789]
+    );
+
+    expect(subscription.provider).toBe("lemon_squeezy");
+    expect(subscription.tier).toBe("pro");
+    expect(subscription.status).toBe("trialing");
+    expect(subscription.lemon_squeezy_customer_id).toBe("456");
+    expect(subscription.lemon_squeezy_subscription_id).toBe("123");
+    expect(subscription.lemon_squeezy_variant_id).toBe("789");
+    expect(subscription.current_period_end).toEqual(
+      new Date("2026-03-01T00:00:00.000Z")
+    );
+    expect(subscription.cancel_at_period_end).toBe(true);
+  });
+
+  it("should honor Lemon Squeezy custom tier metadata", () => {
+    const subscription = subscriptionFromLemonSqueezySnapshot("user-1", {
+      id: "sub-1",
+      attributes: {
+        status: "active",
+        variant_id: "not-in-allowlist",
+      },
+      meta: {
+        custom_data: {
+          tier: "pro",
+        },
+      },
+    });
+
+    expect(subscription.tier).toBe("pro");
+    expect(hasEntitlement(subscription, "social.copy_trade")).toBe(true);
+  });
+
+  it("should map activated Lemon Squeezy licenses to Pro access", () => {
+    const license = licenseFromLemonSqueezySnapshot("user-1", {
+      activated: true,
+      error: null,
+      license_key: {
+        id: 1,
+        status: "active",
+        key: "38b1460a-5104-4067-a91d-77b872934d51",
+        expires_at: "2026-04-01T00:00:00.000Z",
+      },
+      instance: {
+        id: "instance-1",
+        name: "Hydra Web",
+        created_at: "2026-02-01T00:00:00.000Z",
+      },
+      meta: {
+        customer_id: 6,
+        customer_email: "collector@example.com",
+        product_id: 4,
+        product_name: "Hydra Pro",
+        variant_id: 5,
+        variant_name: "Yearly",
+      },
+    });
+
+    expect(license.provider).toBe("lemon_squeezy");
+    expect(license.tier).toBe("pro");
+    expect(license.license_key_id).toBe("1");
+    expect(license.license_key_last4).toBe("4d51");
+    expect(license.instance_id).toBe("instance-1");
+    expect(license.customer_id).toBe("6");
+    expect(license.expires_at).toEqual(new Date("2026-04-01T00:00:00.000Z"));
+    expect(effectiveTier(license, new Date("2026-03-01T00:00:00.000Z"))).toBe(
+      "pro"
+    );
+  });
+
+  it("should keep non-Pro Lemon Squeezy licenses on the free tier", () => {
+    const license = licenseFromLemonSqueezySnapshot(
+      "user-1",
+      {
+        valid: true,
+        license_key: {
+          id: "license-1",
+          status: "active",
+        },
+        meta: {
+          product_name: "Hydra Starter",
+          variant_id: "starter",
+        },
+      },
+      ["pro"]
+    );
+
+    expect(license.tier).toBe("free");
+    expect(hasEntitlement(license, "portfolio.analytics.basic")).toBe(true);
+    expect(hasEntitlement(license, "portfolio.analytics.advanced")).toBe(false);
+  });
+
+  it("should deny access when Lemon Squeezy rejects activation", () => {
+    const license = licenseFromLemonSqueezySnapshot("user-1", {
+      activated: false,
+      error: "This license key has reached the activation limit.",
+      license_key: {
+        id: "license-1",
+        status: "active",
+      },
+      meta: {
+        product_name: "Hydra Pro",
+      },
+    });
+
+    expect(license.status).toBe("inactive");
+    expect(license.provider_error).toContain("activation limit");
+    expect(effectiveTier(license)).toBe("free");
+    expect(hasEntitlement(license, "social.copy_trade")).toBe(false);
+  });
+
+  it("should reject malformed Lemon Squeezy dates", () => {
+    expect(() =>
+      licenseFromLemonSqueezySnapshot("user-1", {
+        license_key: {
+          id: "license-1",
+          status: "active",
+          expires_at: "not-a-date",
+        },
+      })
+    ).toThrow("Invalid date");
   });
 });
 
