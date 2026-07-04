@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Customer-facing API and usage guide covering auth, endpoints, examples, billing, webhooks, and TypeScript helper usage
 - Stripe subscription and in-app purchase scaffold for Hydra Pro checkout, entitlement checks, and webhook state mapping
 - Pro-gated portfolio analytics and cataloging limit helpers
 - CONVERGENCE Sprint: Full PRODUCTION promotion — CI/CD, prototype skeleton, ADRs, badge row

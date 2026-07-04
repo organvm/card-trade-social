@@ -227,6 +227,10 @@ COINBASE_COMMERCE_KEY=       # Crypto payment rail
 
 ## 5. Usage and API
 
+For customer-facing authentication, endpoint contracts, request/response
+examples, billing flows, webhook handling, and TypeScript helper usage, see the
+[Hydra Customer API and Usage Guide](docs/api-reference.md).
+
 ### Key Endpoints
 
 ```
@@ -236,6 +240,13 @@ GET    /api/v1/portfolio/:userId     # Portfolio valuation snapshot
 POST   /api/v1/portfolio/holdings    # Add cards to portfolio (with cost basis)
 GET    /api/v1/alerts/arbitrage      # Active arbitrage opportunities
 WS     /ws/prices                    # Real-time price stream (WebSocket)
+
+POST   /api/v1/trades                # Create a trade proposal
+GET    /api/v1/trades                # List trades for the authenticated user
+POST   /api/v1/trades/:id/accept     # Accept a pending trade as receiver
+POST   /api/v1/trades/:id/reject     # Reject a pending trade as receiver
+POST   /api/v1/trades/:id/cancel     # Cancel a pending trade as proposer
+POST   /api/v1/trades/:id/counter    # Counter a pending trade as receiver
 
 GET    /api/v1/feed/:userId          # Social activity feed
 POST   /api/v1/guilds               # Create a guild
